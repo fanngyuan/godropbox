@@ -1,6 +1,7 @@
 package memcache
 
 import (
+	"encoding/binary"
 	"sync"
 
 	"github.com/dropbox/godropbox/errors"
@@ -229,7 +230,24 @@ func (c *MockClient) Increment(
 	initValue uint64,
 	expiration uint32) CountResponse {
 
-	return NewCountErrorResponse(key, errors.Newf("Increment not implemented"))
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	item, ok := c.data[key]
+	var count uint64
+	if ok {
+		count = binary.BigEndian.Uint64(item.Value) + delta
+		item.Value = binary.BigEndian.PutUint64(count)
+	} else {
+		count = initValue + delta
+		item = Item{
+			Key:        key,
+			Value:      binary.BigEndian.PutUint64(count),
+			Expiration: expiration,
+		}
+	}
+	c.addHelper(item)
+	return NewCountResponse(key, StatusNoError, count)
 }
 
 // This decrements the key's counter by delta.  If the counter does not
@@ -252,7 +270,32 @@ func (c *MockClient) Decrement(
 	initValue uint64,
 	expiration uint32) CountResponse {
 
-	return NewCountErrorResponse(key, errors.Newf("Decrement not implemented"))
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	item, ok := c.data[key]
+	var count uint64
+	if ok {
+		if binary.BigEndian.Uint64(item.Value) >= delta {
+			count = binary.BigEndian.Uint64(item.Value) - delta
+		} else {
+			count = 0
+		}
+		item.Value = binary.BigEndian.PutUint64(count)
+	} else {
+		if initValue >= delta {
+			count = initValue - delta
+		} else {
+			count = 0
+		}
+		item = Item{
+			Key:        key,
+			Value:      binary.BigEndian.PutUint64(count),
+			Expiration: expiration,
+		}
+	}
+	c.addHelper(item)
+	return NewCountResponse(key, StatusNoError, count)
 }
 
 // This invalidates all existing cache items after expiration number of
